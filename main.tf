@@ -87,12 +87,12 @@ resource "aws_iam_role" "npurkiss_eks" {
 POLICY
 }
 
-resource "aws_iam_role_policy_attachment" "demo-cluster-AmazonEKSClusterPolicy" {
+resource "aws_iam_role_policy_attachment" "npurkiss_eks_AmazonEKSClusterPolicy" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
   role       = "${aws_iam_role.npurkiss_eks.name}"
 }
 
-resource "aws_iam_role_policy_attachment" "demo-cluster-AmazonEKSServicePolicy" {
+resource "aws_iam_role_policy_attachment" "npurkiss_eks_AmazonEKSServicePolicy" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSServicePolicy"
   role       = "${aws_iam_role.npurkiss_eks.name}"
 }
@@ -128,4 +128,19 @@ resource "aws_security_group_rule" "eks-cluster-ingress-workstation-https" {
   security_group_id = "${aws_security_group.npurkiss_eks.id}"
   to_port           = 443
   type              = "ingress"
+}
+
+resource "aws_eks_cluster" "npurkiss_eks" {
+  name            = "${var.cluster-name}"
+  role_arn        = "${aws_iam_role.npurkiss_eks.arn}"
+
+  vpc_config {
+    security_group_ids = ["${aws_security_group.npurkiss_eks.id}"]
+    subnet_ids         = ["${aws_subnet.npurkiss_eks_subnet.*.id}"]
+  }
+
+  depends_on = [
+    "aws_iam_role_policy_attachment.npurkiss_eks_AmazonEKSClusterPolicy",
+    "aws_iam_role_policy_attachment.npurkiss_eks_AmazonEKSServicePolicy",
+  ]
 }
