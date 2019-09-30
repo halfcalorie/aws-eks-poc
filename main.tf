@@ -13,6 +13,7 @@ variable "cluster-name" {
 }
 data "aws_availability_zones" "available" {}
 
+
 ###############################################################################
 # V P C
 ###############################################################################
@@ -68,7 +69,7 @@ resource "aws_route_table_association" "demo" {
 #  I A M 
 ###############################################################################
 
-resource "aws_iam_role" "npurkiss_eks" {
+resource "aws_iam_role" "npurkiss_eks_cluster" {
   name = "npurkiss_eks"
 
   assume_role_policy = <<POLICY
@@ -89,13 +90,53 @@ POLICY
 
 resource "aws_iam_role_policy_attachment" "npurkiss_eks_AmazonEKSClusterPolicy" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
-  role       = "${aws_iam_role.npurkiss_eks.name}"
+  role       = "${aws_iam_role.npurkiss_eks_cluster.name}"
 }
 
 resource "aws_iam_role_policy_attachment" "npurkiss_eks_AmazonEKSServicePolicy" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSServicePolicy"
-  role       = "${aws_iam_role.npurkiss_eks.name}"
+  role       = "${aws_iam_role.npurkiss_eks_cluster.name}"
 }
+
+resource "aws_iam_role" "npurkiss_eks_node" {
+  name = "npurkiss_eks_node"
+
+  assume_role_policy = <<POLICY
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "ec2.amazonaws.com"
+      },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}
+POLICY
+}
+
+resource "aws_iam_role_policy_attachment" "npurkiss_eks_node_AmazonEKSWorkerNodePolicy" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
+  role       = "${aws_iam_role.npurkiss_eks_node.name}"
+}
+
+resource "aws_iam_role_policy_attachment" "npurkiss_eks_node_AmazonEKS_CNI_Policy" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
+  role       = "${aws_iam_role.npurkiss_eks_node.name}"
+}
+
+resource "aws_iam_role_policy_attachment" "npurkiss_eks_node_AmazonEC2ContainerRegistryReadOnly" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+  role       = "${aws_iam_role.npurkiss_eks_node.name}"
+}
+
+resource "aws_iam_instance_profile" "npurkiss_eks_node" {
+  name = "npurkiss_eks_node"
+  role = "${aws_iam_role.npurkiss_eks_node.name}"
+}
+
 
 ###############################################################################
 # S E C U R I T Y    G R O U P S
@@ -130,9 +171,62 @@ resource "aws_security_group_rule" "eks-cluster-ingress-workstation-https" {
   type              = "ingress"
 }
 
+resource "aws_security_group" "npurkiss_eks_node" {
+  name        = "npurkiss_eks_node"
+  description = "Security group for all nodes in the cluster"
+  vpc_id      = "${aws_vpc.npurkiss_eks_vpc.id}"
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = "${
+    map(
+     "Name", "npurkiss_eks_node",
+     "kubernetes.io/cluster/${var.cluster-name}", "owned",
+    )
+  }"
+}
+
+resource "aws_security_group_rule" "npurkiss_eks_node-ingress-self" {
+  description              = "Allow node to communicate with each other"
+  from_port                = 0
+  protocol                 = "-1"
+  security_group_id        = "${aws_security_group.npurkiss_eks_node.id}"
+  source_security_group_id = "${aws_security_group.npurkiss_eks_node.id}"
+  to_port                  = 65535
+  type                     = "ingress"
+}
+
+resource "aws_security_group_rule" "npurkiss_eks_node-ingress-cluster" {
+  description              = "Allow worker Kubelets and pods to receive communication from the cluster control plane"
+  from_port                = 1025
+  protocol                 = "tcp"
+  security_group_id        = "${aws_security_group.npurkiss_eks_node.id}"
+  source_security_group_id = "${aws_security_group.npurkiss_eks_node.id}"
+  to_port                  = 65535
+  type                     = "ingress"
+}
+
+resource "aws_security_group_rule" "npurkiss_eks-ingress-node-https" {
+  description              = "Allow pods to communicate with the cluster API Server"
+  from_port                = 443
+  protocol                 = "tcp"
+  security_group_id        = "${aws_security_group.npurkiss_eks.id}"
+  source_security_group_id = "${aws_security_group.npurkiss_eks_node.id}"
+  to_port                  = 443
+  type                     = "ingress"
+}
+
+###############################################################################
+# E K S    C L U S T E R (S)
+###############################################################################
 resource "aws_eks_cluster" "npurkiss_eks" {
   name            = "${var.cluster-name}"
-  role_arn        = "${aws_iam_role.npurkiss_eks.arn}"
+  role_arn        = "${aws_iam_role.npurkiss_eks_cluster.arn}"
 
   vpc_config {
     security_group_ids = ["${aws_security_group.npurkiss_eks.id}"]
@@ -144,3 +238,91 @@ resource "aws_eks_cluster" "npurkiss_eks" {
     "aws_iam_role_policy_attachment.npurkiss_eks_AmazonEKSServicePolicy",
   ]
 }
+data "aws_ami" "eks-worker" {
+  filter {
+    name   = "name"
+    values = ["amazon-eks-node-${aws_eks_cluster.npurkiss_eks.version}-v*"]
+    values = ["amazon-eks-node-1.13-v*"]
+
+  }
+
+  most_recent = true
+  owners      = ["602401143452"] # Amazon EKS AMI Account ID
+}
+
+# This data source is included for ease of sample architecture deployment
+# and can be swapped out as necessary.
+data "aws_region" "current" {}
+
+# EKS currently documents this required userdata for EKS worker nodes to
+# properly configure Kubernetes applications on the EC2 instance.
+# We implement a Terraform local here to simplify Base64 encoding this
+# information into the AutoScaling Launch Configuration.
+# # More information: https://docs.aws.amazon.com/eks/latest/userguide/launch-workers.html
+locals {
+  npurkiss_eks_userdata = <<USERDATA
+#!/bin/bash
+set -o xtrace
+/etc/eks/bootstrap.sh --apiserver-endpoint '${aws_eks_cluster.npurkiss_eks.endpoint}' --b64-cluster-ca '${aws_eks_cluster.npurkiss_eks.certificate_authority.0.data}' '${var.cluster-name}'
+USERDATA
+}
+
+resource "aws_launch_configuration" "npurkiss_eks_node" {
+  associate_public_ip_address = true
+  iam_instance_profile        = "${aws_iam_instance_profile.npurkiss_eks_node.name}"
+  image_id                    = "${data.aws_ami.eks-worker.id}"
+  instance_type               = "m4.large"
+  name_prefix                 = "npurkiss_eks"
+  security_groups             = ["${aws_security_group.npurkiss_eks_node.id}"]
+  user_data_base64            = "${base64encode(local.npurkiss_eks_userdata)}"
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+resource "aws_autoscaling_group" "npurkiss_eks_nodes" {
+  desired_capacity     = 2
+  launch_configuration = "${aws_launch_configuration.npurkiss_eks_node.id}"
+  max_size             = 2
+  min_size             = 1
+  name                 = "npurkiss_eks_node"
+  vpc_zone_identifier  = ["${aws_subnet.npurkiss_eks_subnet.*.id}"]
+
+  tag {
+    key                 = "Name"
+    value               = "npurkiss_eks_node"
+    propagate_at_launch = true
+  }
+
+  tag {
+    key                 = "kubernetes.io/cluster/${var.cluster-name}"
+    value               = "owned"
+    propagate_at_launch = true
+  }
+}
+
+### output an example IAM Role authentication ConfigMap from your Terraform configuration
+locals {
+  config_map_aws_auth = <<CONFIGMAPAWSAUTH
+
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aws-auth
+  namespace: kube-system
+data:
+  mapRoles: |
+    - rolearn: ${aws_iam_role.npurkiss_eks_node.arn}
+      username: system:node:{{EC2PrivateDNSName}}
+      groups:
+        - system:bootstrappers
+        - system:nodes
+CONFIGMAPAWSAUTH
+}
+
+output "config_map_aws_auth" {
+  value = "${local.config_map_aws_auth}"
+}
+
