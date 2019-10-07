@@ -11,6 +11,11 @@ variable "cluster-name" {
   default = "npurkiss_eks"
   type    = "string"
 }
+
+variable "kubernetes-version" {
+  default = "1.14"
+  type    = "string"
+}
 data "aws_availability_zones" "available" {}
 
 
@@ -227,7 +232,7 @@ resource "aws_security_group_rule" "npurkiss_eks-ingress-node-https" {
 resource "aws_eks_cluster" "npurkiss_eks" {
   name            = "${var.cluster-name}"
   role_arn        = "${aws_iam_role.npurkiss_eks_cluster.arn}"
-
+  version         = "${var.kubernetes-version}"
   vpc_config {
     security_group_ids = ["${aws_security_group.npurkiss_eks.id}"]
     subnet_ids         = ["${aws_subnet.npurkiss_eks_subnet.*.id}"]
@@ -242,8 +247,6 @@ data "aws_ami" "eks-worker" {
   filter {
     name   = "name"
     values = ["amazon-eks-node-${aws_eks_cluster.npurkiss_eks.version}-v*"]
-    values = ["amazon-eks-node-1.13-v*"]
-
   }
 
   most_recent = true
