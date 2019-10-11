@@ -10,3 +10,6 @@
 
 # tf plan
 plan.out
+
+# local kubernetes config_map
+config_map_aws_auth.yaml
