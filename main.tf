@@ -137,6 +137,16 @@ resource "aws_iam_role_policy_attachment" "npurkiss_eks_node_AmazonEC2ContainerR
   role       = "${aws_iam_role.npurkiss_eks_node.name}"
 }
 
+resource "aws_iam_role_policy_attachment" "npurkiss_eks_node_AmazonDynamoDBFullAccess" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess"
+  role       = "${aws_iam_role.npurkiss_eks_node.name}"
+}
+
+resource "aws_iam_role_policy_attachment" "npurkiss_eks_node_AmazonS3FullAccessy" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonS3FullAccess"
+  role       = "${aws_iam_role.npurkiss_eks_node.name}"
+}
+
 resource "aws_iam_instance_profile" "npurkiss_eks_node" {
   name = "npurkiss_eks_node"
   role = "${aws_iam_role.npurkiss_eks_node.name}"
@@ -211,7 +221,7 @@ resource "aws_security_group_rule" "npurkiss_eks_node-ingress-cluster" {
   from_port                = 1025
   protocol                 = "tcp"
   security_group_id        = "${aws_security_group.npurkiss_eks_node.id}"
-  source_security_group_id = "${aws_security_group.npurkiss_eks_node.id}"
+  source_security_group_id = "${aws_security_group.npurkiss_eks.id}"
   to_port                  = 65535
   type                     = "ingress"
 }
